@@ -10,8 +10,8 @@ azure:
   audience: 213b4c6d-59e8-44e4-a319-63b38eef4c6e
 
 services:
-  appointments-url: http://localhost:8081
-  catalog-url: http://localhost:8082
+  appointments-url: ${APPOINTMENTS_URL:http://localhost:8081}
+  catalog-url: ${CATALOG_URL:http://localhost:8082}
 
 management:
   endpoints:
