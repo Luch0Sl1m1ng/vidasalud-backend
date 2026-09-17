@@ -1,0 +1,14 @@
+spring:
+  datasource:
+    url: jdbc:oracle:thin:@${DB_HOST}:1521/${DB_SERVICE}
+    driver-class-name: oracle.jdbc.OracleDriver
+    username: ${DB_USER}
+    password: ${DB_PASS}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate.dialect: org.hibernate.dialect.OracleDialect
+  h2:
+    console:
+      enabled: false

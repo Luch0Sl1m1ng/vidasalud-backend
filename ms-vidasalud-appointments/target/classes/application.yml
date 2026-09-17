@@ -1,0 +1,33 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: ms-vidasalud-appointments
+
+  # --- Perfil local: H2 en memoria, para poder correr y probar YA ---
+  datasource:
+    url: jdbc:h2:mem:appointmentsdb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate.format_sql: true
+
+azure:
+  issuer: https://login.microsoftonline.com/b474f3ba-4718-40c4-90eb-000db1255fdd/v2.0
+  audience: 213b4c6d-59e8-44e4-a319-63b38eef4c6e
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

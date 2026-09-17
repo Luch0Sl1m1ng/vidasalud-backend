@@ -1,0 +1,28 @@
+# Para levantar todo junto en tu máquina o en EC2 (perfil local, con H2).
+# En EC2 real, agrega spring.profiles.active=prod y las variables de Oracle.
+services:
+  bff:
+    build: ./ms-vidasalud-bff
+    ports: ["8080:8080"]
+    environment:
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - APPOINTMENTS_URL=http://appointments:8081
+      - CATALOG_URL=http://catalog:8082
+    depends_on:
+      - appointments
+      - catalog
+
+  appointments:
+    build: ./ms-vidasalud-appointments
+    ports: ["8081:8081"]
+    environment:
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+
+  catalog:
+    build: ./ms-vidasalud-catalog
+    ports: ["8082:8082"]
+    environment:
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
