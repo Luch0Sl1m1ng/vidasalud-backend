@@ -22,6 +22,45 @@ spring:
     properties:
       hibernate.format_sql: true
 
+  # --- EP3: conexión a RabbitMQ (credenciales por variable de entorno) ---
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:vidasalud}
+    password: ${RABBITMQ_PASSWORD:vidasalud123}
+    connection-timeout: 3s   # si RabbitMQ está caído, no cuelga la API de citas
+
+# --- EP3: TODOS los nombres de la topología RabbitMQ viven aquí (y solo aquí) ---
+vidasalud:
+  rabbit:
+    exchanges:
+      direct: cmd.direct
+      topic: cmd.topic
+      dlx: cmd.dead.dlx
+    queues:
+      email: q.cmd.email
+      email-dlq: q.cmd.email.dlq
+      admission: q.cmd.admission
+      admission-dlq: q.cmd.admission.dlq
+      record: q.cmd.record
+      record-dlq: q.cmd.record.dlq
+    routing-keys:            # binding del exchange direct
+      email: email.send
+      admission: admission.ticket
+      record: record.gen
+    topic-patterns:          # binding del exchange topic
+      email: "email.*"
+      admission: "admission.#"
+      record: "record.*"
+    topic-routing-keys:      # claves concretas que publica el productor al topic
+      email-call: email.call
+      admission-call: admission.box.call
+      record-summary: record.summary
+    dlq-keys:                # routing key con la que el DLX reparte cada DLQ
+      email: email.dlq
+      admission: admission.dlq
+      record: record.dlq
+
 azure:
   issuer: https://login.microsoftonline.com/b474f3ba-4718-40c4-90eb-000db1255fdd/v2.0
   audience: 213b4c6d-59e8-44e4-a319-63b38eef4c6e
@@ -30,4 +69,4 @@ management:
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,info

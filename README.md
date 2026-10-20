@@ -19,6 +19,8 @@ Este documento esta pensado para que cualquier persona, sin conocimiento previo 
 11. Referencia de endpoints
 12. Problemas frecuentes y solucion
 
+Seccion adicional EP3: "11 bis. Mensajeria asincrona con RabbitMQ".
+
 ---
 
 ## 1. Descripcion general y arquitectura
@@ -490,6 +492,60 @@ Crea una prestacion nueva. Requiere rol Admin. Cuerpo esperado:
 
 PUT /api/catalog/services/{id}
 Actualiza una prestacion existente (precio, cupo, etc). Requiere rol Admin.
+
+## 11 bis. Mensajeria asincrona con RabbitMQ (EP3)
+
+Se suman tres piezas al sistema, sin cambiar los endpoints existentes:
+
+| Servicio | Puerto | Rol |
+|---|---|---|
+| ms-vidasalud-appointments | 8081 | **Productor**: al crear o cambiar de estado una atencion publica comandos a RabbitMQ. Si RabbitMQ esta caido, la API sigue funcionando (solo registra el error en el log). |
+| ms-vidasalud-notify | 8083 (interno) | **Consumidor** de las colas email, admission y record. ACK/NACK manual, 3 reintentos con backoff y DLQ. No es publico. |
+| ms-vidasalud-rabbit-admin | 8084 | API para crear/eliminar colas, exchanges y bindings. Protegida con JWT, solo rol Admin. Se llama por el BFF en `/api/mq/**`. |
+
+Topologia (6 colas = 3 flujos + 3 DLQ). Todos los nombres estan en `application.yml` bajo `vidasalud.rabbit`:
+
+| Cola | DLQ | Binding direct (`cmd.direct`) | Binding topic (`cmd.topic`) |
+|---|---|---|---|
+| q.cmd.email | q.cmd.email.dlq | email.send | email.* |
+| q.cmd.admission | q.cmd.admission.dlq | admission.ticket | admission.# |
+| q.cmd.record | q.cmd.record.dlq | record.gen | record.* |
+
+Las DLQ cuelgan del exchange `cmd.dead.dlx` (direct).
+
+Que evento dispara cada cambio de estado:
+
+| Estado nuevo | Mensajes publicados |
+|---|---|
+| SOLICITADA | email.send |
+| CONFIRMADA | email.send + record.gen (comprobante) |
+| EN_ESPERA | admission.ticket |
+| EN_ATENCION | email.call + admission.box.call (por el exchange topic) |
+| CERRADA | email.send + record.summary (por el exchange topic) |
+| CANCELADA | email.send |
+
+Levantar todo: copiar `.env.example` a `.env`, completar `RABBITMQ_USER` y `RABBITMQ_PASSWORD`, y ejecutar `docker compose up -d --build`.
+Management UI: http://localhost:15672. Clúster de 2 nodos (equivalente a `ec2-mq`): carpeta `mq/` (`cd mq && docker compose up -d`).
+
+Probar la DLQ: crear una atencion con `pacienteId` que empiece con `fail-fatal` (va directo a la DLQ) o `fail-temp` (reintenta 3 veces y termina en la DLQ). Esto solo funciona con `vidasalud.notify.demo-failures: true`.
+
+Endpoints del administrador (todos requieren rol Admin):
+
+| Metodo | Ruta | Descripcion |
+|---|---|---|
+| POST | /api/mq/queues | Crear cola (name, durable, autoDelete, deadLetterExchange, deadLetterRoutingKey, messageTtlMs, maxLength) |
+| GET | /api/mq/queues | Listar colas |
+| GET | /api/mq/queues/{name} | Mensajes y consumidores de una cola |
+| DELETE | /api/mq/queues/{name}?ifUnused=&ifEmpty= | Eliminar cola |
+| POST | /api/mq/queues/{name}/purge | Vaciar cola |
+| POST | /api/mq/exchanges | Crear exchange (name, type: direct/topic/fanout/headers) |
+| GET | /api/mq/exchanges | Listar exchanges |
+| DELETE | /api/mq/exchanges/{name} | Eliminar exchange |
+| POST | /api/mq/bindings | Crear binding (exchange, destination, destinationType QUEUE/EXCHANGE, routingKey) |
+| GET | /api/mq/bindings | Listar bindings |
+| DELETE | /api/mq/bindings | Eliminar binding (mismo cuerpo que el POST) |
+
+---
 
 ## 12. Problemas frecuentes y solucion
 
