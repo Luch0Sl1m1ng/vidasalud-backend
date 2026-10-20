@@ -43,6 +43,8 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers("/actuator/health").permitAll()
+                .requestMatchers("/api/mq/**")
+                    .hasAuthority("ROLE_Admin")
                 .requestMatchers("/api/audit/**", "/api/report/**")
                     .hasAnyAuthority("ROLE_Admin", "ROLE_Auditor")
                 .requestMatchers(HttpMethod.PUT, "/api/appointments/*/status")

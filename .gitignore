@@ -1,0 +1,25 @@
+# ===== Java / Maven =====
+target/
+*.class
+*.jar
+*.war
+*.log
+hs_err_pid*
+
+# ===== IDEs =====
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# ===== Secretos / entorno (NUNCA subir) =====
+.env
+*.env.local
+
+# ===== Sistema operativo =====
+.DS_Store
+Thumbs.db
+
+docker-compose.override.yml

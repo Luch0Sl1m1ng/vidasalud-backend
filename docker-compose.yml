@@ -1,6 +1,23 @@
 # Para levantar todo junto en tu máquina o en EC2 (perfil local, con H2).
 # En EC2 real, agrega spring.profiles.active=prod y las variables de Oracle.
+# EP3: se suman RabbitMQ (con Management UI), notify (consumidor) y rabbit-admin.
 services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: vidasalud-rabbitmq
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # Management UI  -> http://localhost:15672
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
   bff:
     build: ./ms-vidasalud-bff
     ports: ["8080:8080"]
@@ -9,9 +26,11 @@ services:
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
       - APPOINTMENTS_URL=http://appointments:8081
       - CATALOG_URL=http://catalog:8082
+      - RABBIT_ADMIN_URL=http://rabbit-admin:8084
     depends_on:
       - appointments
       - catalog
+      - rabbit-admin
 
   appointments:
     build: ./ms-vidasalud-appointments
@@ -19,6 +38,13 @@ services:
     environment:
       - AZURE_TENANT_ID=${AZURE_TENANT_ID}
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - RABBITMQ_HOST=${RABBITMQ_HOST:-rabbitmq}
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
   catalog:
     build: ./ms-vidasalud-catalog
@@ -26,3 +52,32 @@ services:
     environment:
       - AZURE_TENANT_ID=${AZURE_TENANT_ID}
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+
+  # Consumidor RabbitMQ: NO es público (sin ports). Solo habla con RabbitMQ.
+  notify:
+    build: ./ms-vidasalud-notify
+    environment:
+      - RABBITMQ_HOST=${RABBITMQ_HOST:-rabbitmq}
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  # Administrador de RabbitMQ (crear/eliminar colas, exchanges, bindings). Protegido con JWT + rol Admin.
+  rabbit-admin:
+    build: ./ms-vidasalud-rabbit-admin
+    ports: ["8084:8084"]
+    environment:
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - RABBITMQ_HOST=${RABBITMQ_HOST:-rabbitmq}
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_MANAGEMENT_URL=${RABBITMQ_MANAGEMENT_URL:-http://rabbitmq:15672}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+

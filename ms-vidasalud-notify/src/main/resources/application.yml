@@ -1,0 +1,60 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: ms-vidasalud-notify
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:vidasalud}
+    password: ${RABBITMQ_PASSWORD:vidasalud123}
+    listener:
+      simple:
+        acknowledge-mode: manual      # el consumidor hace basicAck / basicNack explícitos
+        prefetch: 1                   # un mensaje a la vez por consumidor
+        default-requeue-rejected: false   # red de seguridad: un rechazo nunca vuelve a la cola, va a la DLQ
+
+# --- EP3: TODOS los nombres de la topología RabbitMQ viven aquí (y solo aquí) ---
+vidasalud:
+  rabbit:
+    exchanges:
+      direct: cmd.direct
+      topic: cmd.topic
+      dlx: cmd.dead.dlx
+    queues:
+      email: q.cmd.email
+      email-dlq: q.cmd.email.dlq
+      admission: q.cmd.admission
+      admission-dlq: q.cmd.admission.dlq
+      record: q.cmd.record
+      record-dlq: q.cmd.record.dlq
+    routing-keys:
+      email: email.send
+      admission: admission.ticket
+      record: record.gen
+    topic-patterns:
+      email: "email.*"
+      admission: "admission.#"
+      record: "record.*"
+    dlq-keys:
+      email: email.dlq
+      admission: admission.dlq
+      record: record.dlq
+
+  notify:
+    # true = pacienteId que empiece con "fail-temp" simula error recuperable (reintenta y termina en DLQ)
+    #        y "fail-fatal" simula error no recuperable (DLQ directo). Útil para la demo. En producción: false.
+    demo-failures: true
+    retry:
+      max-attempts: 3
+      initial-interval-ms: 1000
+      multiplier: 2.0
+      max-interval-ms: 10000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

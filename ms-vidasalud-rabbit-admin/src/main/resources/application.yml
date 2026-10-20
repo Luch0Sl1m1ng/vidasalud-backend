@@ -1,0 +1,28 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: ms-vidasalud-rabbit-admin
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:vidasalud}
+    password: ${RABBITMQ_PASSWORD:vidasalud123}
+    connection-timeout: 3s
+
+vidasalud:
+  rabbit-admin:
+    # API HTTP del Management UI de RabbitMQ: solo se usa para LISTAR (GET). Crear/eliminar usa AMQP (RabbitAdmin).
+    management-url: ${RABBITMQ_MANAGEMENT_URL:http://localhost:15672}
+
+azure:
+  issuer: https://login.microsoftonline.com/b474f3ba-4718-40c4-90eb-000db1255fdd/v2.0
+  audience: 213b4c6d-59e8-44e4-a319-63b38eef4c6e
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

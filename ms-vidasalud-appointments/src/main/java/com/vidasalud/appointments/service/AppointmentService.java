@@ -2,6 +2,7 @@ package com.vidasalud.appointments.service;
 
 import com.vidasalud.appointments.dto.AppointmentRequest;
 import com.vidasalud.appointments.exception.IllegalStateTransitionException;
+import com.vidasalud.appointments.messaging.AppointmentEventPublisher;
 import com.vidasalud.appointments.model.Appointment;
 import com.vidasalud.appointments.model.EstadoAtencion;
 import com.vidasalud.appointments.repository.AppointmentRepository;
@@ -17,6 +18,7 @@ import java.util.Set;
 public class AppointmentService {
 
     private final AppointmentRepository repository;
+    private final AppointmentEventPublisher eventPublisher;
 
     // Transiciones válidas: desde -> hacia permitidas.
     // Esto es lo que exige el caso: "No se puede pasar a EN_ATENCION sin CONFIRMAR"
@@ -29,8 +31,10 @@ public class AppointmentService {
             EstadoAtencion.CANCELADA, Set.of()
     );
 
-    public AppointmentService(AppointmentRepository repository) {
+    public AppointmentService(AppointmentRepository repository,
+                              AppointmentEventPublisher eventPublisher) {
         this.repository = repository;
+        this.eventPublisher = eventPublisher;
     }
 
     public Appointment crear(AppointmentRequest request) {
@@ -39,7 +43,9 @@ public class AppointmentService {
         appointment.setServicioId(request.getServicioId());
         appointment.setBoxId(request.getBoxId());
         appointment.setEstado(EstadoAtencion.SOLICITADA);
-        return repository.save(appointment);
+        Appointment guardada = repository.save(appointment);
+        eventPublisher.publicarCambio(guardada, null);   // EP3: notificación asíncrona
+        return guardada;
     }
 
     public Appointment obtenerPorId(Long id) {
@@ -66,6 +72,8 @@ public class AppointmentService {
         if (nuevoEstado == EstadoAtencion.EN_ATENCION) {
             appointment.setFechaAtencion(LocalDateTime.now());
         }
-        return repository.save(appointment);
+        Appointment guardada = repository.save(appointment);
+        eventPublisher.publicarCambio(guardada, actual);   // EP3: notificación asíncrona
+        return guardada;
     }
 }
