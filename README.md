@@ -19,7 +19,7 @@ Este documento esta pensado para que cualquier persona, sin conocimiento previo 
 11. Referencia de endpoints
 12. Problemas frecuentes y solucion
 
-Seccion adicional EP3: "11 bis. Mensajeria asincrona con RabbitMQ".
+Secciones adicionales EP3: "11 bis. Mensajeria asincrona con RabbitMQ" y "11 ter. Despliegue de EP3 en AWS (RabbitMQ en EC2 independiente)".
 
 ---
 
@@ -53,7 +53,12 @@ vidasalud-backend/
   ms-vidasalud-bff/
   ms-vidasalud-appointments/
   ms-vidasalud-catalog/
-  docker-compose.yml
+  ms-vidasalud-notify/          (EP3: consumidor RabbitMQ)
+  ms-vidasalud-rabbit-admin/    (EP3: API de administracion de RabbitMQ)
+  mq/                           (EP3: cluster RabbitMQ de 2 nodos para la EC2 independiente)
+  docker-compose.yml            (todo en una sola maquina, para desarrollo local)
+  docker-compose.ec2.yml        (EP3: solo las aplicaciones, para la EC2 del backend)
+  apigateway-vidasalud.yml      (EP3: plantilla CloudFormation del API Gateway, rutas explicitas)
   README.md
 ```
 
@@ -379,68 +384,62 @@ Si se trabaja dentro de un laboratorio academico de AWS (por ejemplo, AWS Academ
 
 ## 10. Configuracion del API Gateway
 
-El API Gateway es el punto de entrada publico definitivo del backend. Es quien primero valida el token JWT (antes de que la peticion llegue siquiera a la instancia EC2), y luego reenvia la peticion hacia el BFF.
+El API Gateway (HTTP API) es el punto de entrada publico del backend. Valida el token JWT de Microsoft Entra ID antes de que la peticion llegue a la instancia EC2 y luego la reenvia al BFF (puerto 8080).
 
-### 10.1 Crear la API
+Se crea con la plantilla de CloudFormation `apigateway-vidasalud.yml` (raiz del repositorio), adaptada de la plantilla del profesor. Sus caracteristicas:
 
-1. En la consola de AWS, entrar al servicio API Gateway.
-2. Hacer clic en Crear API, y elegir el tipo HTTP API (no REST API).
-3. Asignar un nombre (por ejemplo, vidasalud-api) y crear la API sin agregar integraciones todavia.
+- **Una ruta explicita por endpoint. No se usan comodines** (ni `{proxy+}` ni rutas `ANY`): una ruta que no esta en la lista responde 404 en el propio Gateway.
+- Todas las rutas, salvo `GET /actuator/health`, llevan el autorizador JWT y exigen el scope `access_as_user`.
+- Los roles (Admin, Operador, Paciente, Auditor) los valida el BFF; el Gateway valida firma, emisor, audiencia y scope.
+- Autorizador JWT: issuer `https://login.microsoftonline.com/<tenant-id>/v2.0` (los tokens de este proyecto son v2.0), audiencia `<client-id>`.
+- CORS configurado en el Gateway (origen por defecto `http://localhost:5173`, parametro `FrontendOrigins`).
 
-### 10.2 Crear el autorizador JWT
+### 10.1 Rutas expuestas (18 + health)
 
-1. Dentro de la API, ir a Autorizacion (Authorizers), y crear uno nuevo.
-2. Tipo: JWT.
-3. Nombre: por ejemplo, entra-id-authorizer.
-4. Origen de identidad: $request.header.Authorization
-5. URL del emisor (Issuer): https://login.microsoftonline.com/<tenant-id>/v2.0
-6. Audiencia: <client-id> (el mismo valor usado en el backend, sin el prefijo api://)
-7. Crear el autorizador.
+| Metodo | Ruta | Roles (validados en el BFF) |
+|---|---|---|
+| POST | /api/appointments | cualquier usuario autenticado |
+| GET | /api/appointments | cualquier usuario autenticado |
+| GET | /api/appointments/{id} | cualquier usuario autenticado |
+| PUT | /api/appointments/{id}/status | Admin, Operador |
+| GET | /api/catalog/services | cualquier usuario autenticado |
+| POST | /api/catalog/services | Admin |
+| PUT | /api/catalog/services/{id} | Admin |
+| POST | /api/mq/queues | Admin |
+| GET | /api/mq/queues | Admin |
+| GET | /api/mq/queues/{name} | Admin |
+| DELETE | /api/mq/queues/{name} | Admin |
+| POST | /api/mq/queues/{name}/purge | Admin |
+| POST | /api/mq/exchanges | Admin |
+| GET | /api/mq/exchanges | Admin |
+| DELETE | /api/mq/exchanges/{name} | Admin |
+| POST | /api/mq/bindings | Admin |
+| GET | /api/mq/bindings | Admin |
+| DELETE | /api/mq/bindings | Admin |
+| GET | /actuator/health | publica (sin token) |
 
-### 10.3 Crear las rutas
+### 10.2 Crear el Gateway con CloudFormation
 
-Es necesario crear varias rutas, porque el comodin de captura de API Gateway ({proxy+}) exige que exista al menos un segmento adicional despues del prefijo; no cubre la ruta exacta sin nada mas al final. Por eso se crean rutas separadas para el caso exacto y para el caso con parametros adicionales.
+1. Consola de AWS, servicio CloudFormation, **Create stack** (with new resources), **Upload a template file**, y subir `apigateway-vidasalud.yml`.
+2. Nombre de la pila: `vidasalud-gateway`.
+3. Parametros: `BffHost` (obligatorio) es el DNS publico de la EC2 donde corre el BFF, sin `http://` ni puerto. El resto trae valores por defecto: `BffPort` 8080, `StageName` dev, `TenantId`, `ApiClientId`, `FrontendOrigins` y `RequiredScope` (access_as_user).
+4. Siguiente, siguiente, enviar. Esperar el estado `CREATE_COMPLETE`.
+5. En la pestana **Outputs** aparece `ApiBaseUrl`: es la URL que debe usar el frontend (`VITE_API_BASE_URL`) y cualquier cliente externo. Nunca se debe usar la IP de la EC2 como URL definitiva.
 
-Crear las siguientes rutas, todas con metodo ANY:
+### 10.3 Verificar el Gateway
 
-- /api/appointments
-- /api/appointments/{proxy+}
-- /api/catalog/{proxy+}
+```
+GW=https://<api-id>.execute-api.us-east-1.amazonaws.com/dev
+curl $GW/actuator/health                 # 200 {"status":"UP"} (ruta publica)
+curl -i $GW/api/catalog/services         # 401 (sin token)
+curl -i $GW/api/mq/loquesea/x            # 404 (no existe ruta: no hay comodin)
+```
 
-### 10.4 Crear las integraciones
+Con un token que traiga `scp: access_as_user` (el que obtiene el frontend con scope `api://<client-id>/access_as_user`), las rutas protegidas responden 200. Un token pedido con `.default` solo trae `User.Read` y el Gateway lo rechaza con 403.
 
-Cada ruta necesita una integracion que la conecte con el backend real. Todas las integraciones apuntan al mismo servicio, el bff, en el puerto 8080, porque es el bff quien despues reenvia internamente a appointments o catalog segun corresponda.
+### 10.4 Si la instancia EC2 cambia de IP
 
-Para cada ruta, crear una integracion de tipo URI del HTTP, con metodo ANY, y la siguiente URL:
-
-- Ruta /api/appointments: http://<ip-publica-de-ec2>:8080/api/appointments
-- Ruta /api/appointments/{proxy+}: http://<ip-publica-de-ec2>:8080/api/appointments/{proxy}
-- Ruta /api/catalog/{proxy+}: http://<ip-publica-de-ec2>:8080/api/catalog/{proxy}
-
-Es importante escribir estas URL a mano en el campo correspondiente en vez de pegarlas, ya que en algunas ocasiones el copiar y pegar introduce caracteres invisibles que la consola de AWS rechaza con el mensaje "Invalid HTTP endpoint specified for URI".
-
-### 10.5 Adjuntar el autorizador a las rutas
-
-Para cada una de las tres rutas creadas en el punto 10.3, ir a la seccion de autorizacion de esa ruta especifica y adjuntar el autorizador creado en el punto 10.2. Sin este paso, el Gateway dejaria pasar peticiones sin token.
-
-### 10.6 Configurar CORS
-
-1. Ir a la seccion CORS de la API.
-2. Access-Control-Allow-Origin: agregar http://localhost:4200 (y, mas adelante, el dominio donde se publique el frontend en produccion).
-3. Access-Control-Allow-Headers: agregar Authorization y Content-Type.
-4. Access-Control-Allow-Methods: seleccionar GET, POST, PUT, DELETE, OPTIONS.
-5. Guardar.
-
-### 10.7 Crear una etapa y desplegar
-
-1. Ir a Implementacion, luego Etapas, y crear una etapa nueva (por ejemplo, dev), con la opcion de implementacion automatica activada.
-2. Al crear la etapa, la consola mostrara la URL de invocacion definitiva, con un formato similar a: https://<identificador>.execute-api.<region>.amazonaws.com/<nombre-etapa>
-
-Esta URL es la que debe usar el frontend (y cualquier cliente externo) para consumir el backend. Nunca se debe usar directamente la IP de la instancia EC2 como URL definitiva para el frontend, porque ademas de no pasar por la validacion del Gateway, esa IP puede cambiar si la instancia se detiene y se reinicia.
-
-### 10.8 Actualizar la IP si la instancia cambia
-
-Si la instancia EC2 se detiene y se inicia de nuevo, y su IP publica cambia (ver seccion 9.7), es necesario volver a la seccion 10.4 y actualizar las tres integraciones con la nueva IP. La URL del API Gateway en si misma no cambia; solo cambia la direccion interna a la que el Gateway reenvia las peticiones.
+Si la EC2 se detiene y se inicia de nuevo, su DNS publico cambia y el Gateway responde `Service Unavailable`. Se corrige en CloudFormation: seleccionar la pila, **Update**, usar la plantilla actual y poner el DNS nuevo en `BffHost`. La URL del Gateway no cambia.
 
 ## 11. Referencia de endpoints
 
@@ -525,7 +524,7 @@ Que evento dispara cada cambio de estado:
 | CANCELADA | email.send |
 
 Levantar todo: copiar `.env.example` a `.env`, completar `RABBITMQ_USER` y `RABBITMQ_PASSWORD`, y ejecutar `docker compose up -d --build`.
-Management UI: http://localhost:15672. Clúster de 2 nodos (equivalente a `ec2-mq`): carpeta `mq/` (`cd mq && docker compose up -d`).
+Management UI: http://localhost:15672. Clúster de 2 nodos para la EC2 independiente: carpeta `mq/` (`cd mq && docker compose up -d`); ver la seccion 11 ter.
 
 Probar la DLQ: crear una atencion con `pacienteId` que empiece con `fail-fatal` (va directo a la DLQ) o `fail-temp` (reintenta 3 veces y termina en la DLQ). Esto solo funciona con `vidasalud.notify.demo-failures: true`.
 
@@ -547,6 +546,67 @@ Endpoints del administrador (todos requieren rol Admin):
 
 ---
 
+## 11 ter. Despliegue de EP3 en AWS (RabbitMQ en EC2 independiente)
+
+Arquitectura desplegada:
+
+```
+Frontend -> API Gateway (JWT) -> BFF :8080 (EC2 "vidasalud-backend")
+                                   |-> appointments (productor) --\
+                                   |-> catalog                      >--> RabbitMQ cluster (EC2 "vidasalud-rabbitmq")
+                                   |-> rabbit-admin ---------------/         ^
+                                   notify (consumidor) -------------------------|
+```
+
+Dos instancias EC2 (us-east-1, t3.small) en la misma VPC:
+
+| Instancia | Que corre | Archivo |
+|---|---|---|
+| vidasalud-rabbitmq | Cluster RabbitMQ de 2 nodos con Docker (rabbitmq-1 y rabbitmq-2) | `mq/compose.yml` |
+| vidasalud-backend | bff, appointments, catalog, notify, rabbit-admin | `docker-compose.ec2.yml` |
+
+### Security Groups
+
+- RabbitMQ (`sg-rabbitmq`): 5672-5673 (AMQP) y 15672 (Management API, la usa rabbit-admin para listar) desde la red interna `172.31.0.0/16`; 15672-15673 (interfaz web) solo desde la IP de quien hace la demo; SSH 22.
+- Aplicaciones: 8080 abierto (entrada del Gateway) y SSH.
+
+### Levantar el cluster RabbitMQ (EC2 vidasalud-rabbitmq)
+
+```
+sudo dnf install -y docker git
+sudo systemctl enable --now docker
+sudo usermod -aG docker ec2-user
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
+sudo curl -SL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+git clone https://github.com/Luch0Sl1m1ng/vidasalud-backend.git
+cd vidasalud-backend/mq
+cp .env.example .env        # editar RABBITMQ_PASSWORD (no se sube a GitHub)
+docker compose up -d
+docker exec rabbitmq-1 rabbitmqctl cluster_status   # deben aparecer rabbit@rabbitmq-1 y rabbit@rabbitmq-2
+```
+
+### Levantar las aplicaciones (EC2 vidasalud-backend)
+
+Crear el `.env` en la raiz del repositorio con `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`, `RABBITMQ_HOST` (IP privada de la EC2 de RabbitMQ) y `RABBITMQ_PORT=5672`. Luego:
+
+```
+COMPOSE_PARALLEL_LIMIT=1 docker-compose -f docker-compose.ec2.yml up -d --build
+```
+
+Si aparece "compose build requires buildx 0.17.0 or later", instalar buildx: descargar `buildx-v0.17.1.linux-amd64` desde github.com/docker/buildx/releases a `~/.docker/cli-plugins/docker-buildx` y darle permiso de ejecucion (`chmod +x`).
+
+Verificacion: `docker logs vidasalud-backend-notify-1` debe mostrar `Created new connection ... amqp://vidasalud@<ip-rabbitmq>:5672`.
+
+### Prueba de punta a punta por el Gateway
+
+1. Crear una cita: `POST <gateway>/api/appointments` con `{"pacienteId":"paciente-demo","servicioId":1}`. En el log de notify aparece `[EMAIL] ... Recibimos tu solicitud` y `ACK`.
+2. Cambiar estados: `PUT <gateway>/api/appointments/{id}/status` con `{"status":"CONFIRMADA"}` (luego EN_ESPERA, EN_ATENCION, CERRADA).
+3. DLQ: crear una cita con `pacienteId` `fail-fatal-01` o `fail-temp-01`; el mensaje termina en `q.cmd.email.dlq` (visible en `GET <gateway>/api/mq/queues/q.cmd.email.dlq` o en la interfaz web de RabbitMQ).
+4. Administracion: listar, crear y eliminar colas, exchanges y bindings en `<gateway>/api/mq/...` con un token de Admin.
+
+---
+
 ## 12. Problemas frecuentes y solucion
 
 Error de compilacion: "no suitable method found for requestMatchers(...)"
@@ -565,7 +625,13 @@ Respuesta 403 en un endpoint que si deberia responder
 Confirmar que el usuario con el que se obtuvo el token tenga asignado el rol correspondiente en Azure (seccion 4.5), y que la regla de autorizacion en el codigo (SecurityConfig.java del microservicio correspondiente) este exigiendo el rol correcto para esa ruta y metodo especificos.
 
 Respuesta 404 al llamar a traves del API Gateway, pero 200 en local
-Generalmente indica un problema en la integracion del Gateway: o falta una ruta especifica (ver seccion 10.3, sobre el comodin {proxy+} que no cubre la ruta exacta sin segmentos adicionales), o la URL de la integracion no incluye el prefijo de ruta correcto antes de {proxy} (por ejemplo, apuntar solo a http://<ip>:8080/{proxy} en vez de http://<ip>:8080/api/appointments/{proxy}).
+El Gateway no tiene comodines: solo existen las rutas listadas en la seccion 10.1. Si el frontend llama a un endpoint que no esta en esa lista, el Gateway responde 404. Hay que agregar la ruta (un recurso `AWS::ApiGatewayV2::Route` mas en `apigateway-vidasalud.yml`) y actualizar la pila.
+
+Respuesta 403 desde el Gateway con un token valido
+El token no trae el scope exigido. Pedirlo con `api://<client-id>/access_as_user` (no con `.default`) y comprobar que el claim `scp` sea `access_as_user`.
+
+Respuesta 503 "Service Unavailable" desde el Gateway
+Casi siempre es que cambio el DNS publico de la EC2 del BFF (seccion 10.4) o que los contenedores no estan corriendo (`docker ps`).
 
 Error "Connection refused" en los registros del bff, dentro de Docker
 Ocurre cuando el archivo application.yml del bff tiene escritas las URL de los otros microservicios como http://localhost:8081 y http://localhost:8082 de forma fija. Dentro de un contenedor Docker, localhost se refiere al propio contenedor, no a los otros. La solucion es que esas URL se lean desde variables de entorno (APPOINTMENTS_URL y CATALOG_URL), que docker-compose.yml ya define apuntando a los nombres de los servicios (http://appointments:8081 y http://catalog:8082), con localhost solo como valor de respaldo para cuando se ejecuta fuera de Docker.
@@ -575,9 +641,6 @@ Es una advertencia normal de docker-compose cuando no existe un archivo .env con
 
 Error "compose build requires buildx" al ejecutar docker compose up --build
 Se soluciona anteponiendo la variable de entorno al comando: DOCKER_BUILDKIT=0 docker-compose up --build
-
-Error "Invalid HTTP endpoint specified for URI" al configurar una integracion en API Gateway
-Suele deberse a caracteres invisibles introducidos al copiar y pegar la URL. Se soluciona borrando el campo por completo y escribiendo la URL manualmente.
 
 La instancia EC2 no responde, o el SSH se vuelve muy lento o falla
 Si se esta usando una instancia t3.micro, es probable que se haya quedado sin memoria disponible al ejecutar los tres microservicios de forma simultanea dentro de Docker. La solucion es detener la instancia (no solo reiniciarla) y cambiar su tipo a uno con mas memoria, por ejemplo t3.small, antes de volver a iniciarla. Recordar que esto cambia la IP publica (ver seccion 9.7).
