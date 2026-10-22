@@ -1,17 +1,17 @@
 # Clúster RabbitMQ de 2 nodos (equivalente a "ec2-mq" del caso).
-# Uso:  cd mq && docker compose up -d
-#   Nodo 1: AMQP localhost:5673  | UI http://localhost:15673
-#   Nodo 2: AMQP localhost:5674  | UI http://localhost:15674
-# (puertos distintos a 5672/15672 para no chocar con el RabbitMQ del compose principal)
+# Uso (en la EC2 independiente de RabbitMQ):  cd mq && docker compose up -d
+#   Nodo 1: AMQP <ip>:5672  | UI http://<ip>:15672   <- los microservicios se conectan aqui
+#   Nodo 2: AMQP <ip>:5673  | UI http://<ip>:15673
+# Si lo pruebas en tu PC junto al compose principal, cambia estos puertos para no chocar con 5672/15672.
 # Credenciales: variables RABBITMQ_USER / RABBITMQ_PASSWORD / RABBITMQ_ERLANG_COOKIE (archivo mq/.env)
 services:
   rabbitmq-1:
-    image: rabbitmq:3.13-management-alpine
+    image: rabbitmq:3.13-management
     container_name: rabbitmq-1
     hostname: rabbitmq-1
     ports:
-      - "5673:5672"
-      - "15673:15672"
+      - "5672:5672"
+      - "15672:15672"
     environment:
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
@@ -22,12 +22,12 @@ services:
     networks: [rabbitmq_cluster]
 
   rabbitmq-2:
-    image: rabbitmq:3.13-management-alpine
+    image: rabbitmq:3.13-management
     container_name: rabbitmq-2
     hostname: rabbitmq-2
     ports:
-      - "5674:5672"
-      - "15674:15672"
+      - "5673:5672"
+      - "15673:15672"
     environment:
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}

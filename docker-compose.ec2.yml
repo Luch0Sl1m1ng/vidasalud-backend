@@ -1,0 +1,58 @@
+# Para la EC2 de las APLICACIONES (bff, appointments, catalog, notify, rabbit-admin).
+# RabbitMQ NO corre aqui: vive en otra EC2 (cluster en mq/compose.yml).
+# Uso:  docker compose -f docker-compose.ec2.yml up -d --build
+# Requiere en .env:  RABBITMQ_HOST=<IP privada de la EC2 de RabbitMQ>  (ademas de las variables de siempre)
+services:
+  bff:
+    build: ./ms-vidasalud-bff
+    ports: ["8080:8080"]
+    environment:
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - APPOINTMENTS_URL=http://appointments:8081
+      - CATALOG_URL=http://catalog:8082
+      - RABBIT_ADMIN_URL=http://rabbit-admin:8084
+    depends_on: [appointments, catalog, rabbit-admin]
+    restart: unless-stopped
+
+  appointments:
+    build: ./ms-vidasalud-appointments
+    ports: ["8081:8081"]
+    environment:
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - RABBITMQ_HOST=${RABBITMQ_HOST:?define RABBITMQ_HOST en .env}
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+    restart: unless-stopped
+
+  catalog:
+    build: ./ms-vidasalud-catalog
+    ports: ["8082:8082"]
+    environment:
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+    restart: unless-stopped
+
+  notify:
+    build: ./ms-vidasalud-notify
+    environment:
+      - RABBITMQ_HOST=${RABBITMQ_HOST:?define RABBITMQ_HOST en .env}
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+    restart: unless-stopped
+
+  rabbit-admin:
+    build: ./ms-vidasalud-rabbit-admin
+    ports: ["8084:8084"]
+    environment:
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - RABBITMQ_HOST=${RABBITMQ_HOST:?define RABBITMQ_HOST en .env}
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_MANAGEMENT_URL=http://${RABBITMQ_HOST}:15672
+    restart: unless-stopped

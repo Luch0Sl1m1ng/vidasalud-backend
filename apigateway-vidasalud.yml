@@ -1,0 +1,315 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  VidaSalud HTTP API Gateway con authorizer JWT de Microsoft Entra ID y rutas
+  EXPLICITAS (sin comodines) hacia el BFF en EC2. Adaptada de la
+  plantilla DigitalFix entregada por el profesor.
+
+Parameters:
+  BffHost:
+    Type: String
+    Description: DNS publico de la EC2 donde corre el BFF (sin http:// ni puerto). Obligatorio.
+
+  BffPort:
+    Type: Number
+    Default: 8080
+    Description: Puerto que publica el contenedor bff en la EC2 (en docker-compose es 8080).
+
+  StageName:
+    Type: String
+    Default: dev
+    AllowedPattern: '^[a-zA-Z0-9_-]+$'
+
+  TenantId:
+    Type: String
+    Default: b474f3ba-4718-40c4-90eb-000db1255fdd
+    Description: Tenant ID de Microsoft Entra (VidaSalud).
+
+  ApiClientId:
+    Type: String
+    Default: 213b4c6d-59e8-44e4-a319-63b38eef4c6e
+    Description: Client ID de la app registration (es tambien el audience del token).
+
+  FrontendOrigins:
+    Type: CommaDelimitedList
+    Default: http://localhost:5173
+    Description: Origenes del navegador permitidos por CORS, separados por coma, sin / final.
+
+  RequiredScope:
+    Type: String
+    Default: access_as_user
+    Description: Scope como aparece en el claim scp del token (sin el prefijo api://).
+
+Resources:
+  VidaSaludHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: VidaSalud
+      Description: VidaSalud BFF HTTP API protegida con Microsoft Entra ID.
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowCredentials: true
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+          - Accept
+          - Origin
+          - X-Requested-With
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowOrigins: !Ref FrontendOrigins
+        ExposeHeaders:
+          - Location
+        MaxAge: 3600
+
+  VidaSaludBffIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      Description: HTTP proxy hacia el BFF de VidaSalud en EC2.
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      IntegrationUri: !Sub 'http://${BffHost}:${BffPort}'
+      ConnectionType: INTERNET
+      RequestParameters:
+        'overwrite:path': '$request.path'
+        'overwrite:header.X-Forwarded-Prefix': !Sub '/${StageName}'
+      TimeoutInMillis: 29000
+      PayloadFormatVersion: '1.0'
+
+  VidaSaludJwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      Name: VidaSalud-EntraID-JWT
+      AuthorizerType: JWT
+      IdentitySource:
+        - '$request.header.Authorization'
+      JwtConfiguration:
+        # Los tokens de VidaSalud son v2.0 (requestedAccessTokenVersion: 2), por eso el issuer es este.
+        Issuer: !Sub 'https://login.microsoftonline.com/${TenantId}/v2.0'
+        Audience:
+          - !Ref ApiClientId
+          - !Sub 'api://${ApiClientId}'
+
+  # ---------------------------------------------------------------
+  # Rutas protegidas con JWT: UNA por endpoint, sin comodines.
+  # El rol (Admin/Operador/...) lo valida el BFF; el gateway valida el JWT y el scope.
+  # ---------------------------------------------------------------
+
+  ListAppointmentsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'GET /api/appointments'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  CreateAppointmentRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'POST /api/appointments'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  GetAppointmentRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'GET /api/appointments/{id}'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  ChangeAppointmentStatusRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'PUT /api/appointments/{id}/status'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  ListCatalogServicesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'GET /api/catalog/services'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  CreateCatalogServiceRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'POST /api/catalog/services'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  UpdateCatalogServiceRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'PUT /api/catalog/services/{id}'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  MqCreateQueueRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'POST /api/mq/queues'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  MqListQueuesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'GET /api/mq/queues'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  MqGetQueueRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'GET /api/mq/queues/{name}'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  MqDeleteQueueRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'DELETE /api/mq/queues/{name}'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  MqPurgeQueueRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'POST /api/mq/queues/{name}/purge'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  MqCreateExchangeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'POST /api/mq/exchanges'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  MqListExchangesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'GET /api/mq/exchanges'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  MqDeleteExchangeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'DELETE /api/mq/exchanges/{name}'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  MqCreateBindingRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'POST /api/mq/bindings'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  MqListBindingsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'GET /api/mq/bindings'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  MqDeleteBindingRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'DELETE /api/mq/bindings'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  # Unica ruta publica: health check del BFF (sin comodin).
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'GET /actuator/health'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: NONE
+
+  VidaSaludDevStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      StageName: !Ref StageName
+      AutoDeploy: true
+      Description: Stage de desarrollo de VidaSalud.
+
+Outputs:
+  ApiId:
+    Description: ID del HTTP API.
+    Value: !Ref VidaSaludHttpApi
+
+  ApiBaseUrl:
+    Description: URL base para configurar como VITE_API_BASE_URL en el frontend.
+    Value: !Sub 'https://${VidaSaludHttpApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}'
+
+  JwtAuthorizerId:
+    Description: ID del authorizer JWT usado por las rutas.
+    Value: !Ref VidaSaludJwtAuthorizer
+
+  BffIntegrationUri:
+    Description: Destino EC2 del BFF usado por el gateway.
+    Value: !Sub 'http://${BffHost}:${BffPort}'
