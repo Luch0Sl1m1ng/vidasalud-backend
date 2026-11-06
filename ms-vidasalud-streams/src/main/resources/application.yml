@@ -1,0 +1,31 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: ms-vidasalud-streams
+
+  # --- Guia 3.2.2: Kafka Streams (pipeline de eventos de citas) ---
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    streams:
+      application-id: vidasalud-streams      # unico: es el consumer group de Streams
+      properties:
+        default.key.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+        default.value.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+        auto.offset.reset: earliest          # primer arranque: procesa tambien los eventos ya publicados
+
+vidasalud:
+  streams:
+    input-topic: vidasalud.citas                       # lo publica ms-vidasalud-appointments (Guia 3.2.1)
+    alerts-topic: vidasalud.alertas                    # salida: alertas
+    por-paciente-topic: vidasalud.citas-por-paciente   # salida: agregacion (eventos acumulados por paciente)
+    umbral-cancelaciones: 3                            # >= N cancelaciones del mismo paciente => alerta
+    partitions: 3
+    replicas: 1
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

@@ -5,6 +5,8 @@
 # Kafka (Guia 3.2.1) es opcional: para activarlo agrega en .env
 #   KAFKA_ENABLED=true  y  KAFKA_BOOTSTRAP_SERVERS=<IP privada de la EC2 de mensajeria>:9092
 # (el broker corre en kafka/docker-compose.yml). Sin esas variables todo funciona solo con RabbitMQ.
+# Guia 3.2.2 (Kafka Streams): el servicio 'streams' solo arranca con el perfil kafka:
+#   docker compose -f docker-compose.ec2.yml --profile kafka up -d --build
 services:
   bff:
     build: ./ms-vidasalud-bff
@@ -48,6 +50,15 @@ services:
       - RABBITMQ_USER=${RABBITMQ_USER}
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
       - KAFKA_ENABLED=${KAFKA_ENABLED:-false}
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}
+    restart: unless-stopped
+
+  # Guia 3.2.2: pipeline Kafka Streams (vidasalud.citas -> vidasalud.alertas / vidasalud.citas-por-paciente)
+  streams:
+    build: ./ms-vidasalud-streams
+    profiles: ["kafka"]
+    ports: ["8085:8085"]
+    environment:
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}
     restart: unless-stopped
 
