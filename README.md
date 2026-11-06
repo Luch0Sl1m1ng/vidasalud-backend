@@ -23,6 +23,8 @@ Secciones adicionales EP3: "11 bis. Mensajeria asincrona con RabbitMQ" y "11 ter
 
 Seccion adicional Guia 3.2.1: "11 quater. Apache Kafka: topic, productor, consumidor, particiones y offsets".
 
+Seccion adicional Guia 3.2.2: "11 quinquies. Pipeline de eventos con Kafka Streams (ms-vidasalud-streams)".
+
 ---
 
 ## 1. Descripcion general y arquitectura
@@ -56,6 +58,7 @@ vidasalud-backend/
   ms-vidasalud-appointments/
   ms-vidasalud-catalog/
   ms-vidasalud-notify/          (EP3: consumidor RabbitMQ)
+  ms-vidasalud-streams/         (Guia 3.2.2: pipeline Kafka Streams)
   ms-vidasalud-rabbit-admin/    (EP3: API de administracion de RabbitMQ)
   mq/                           (EP3: cluster RabbitMQ de 2 nodos para la EC2 independiente)
   kafka/                        (Guia 3.2.1: ZooKeeper + Kafka + Kafka UI con Docker)
@@ -674,6 +677,38 @@ El nombre del contenedor depende de la carpeta desde la que se levanto el compos
 ```
 cd ms-vidasalud-appointments && mvn test     # AppointmentKafkaPublisherTest, AppointmentEventPublisherKafkaTest
 cd ms-vidasalud-notify && mvn test            # CitasKafkaConsumerTest
+```
+
+---
+
+## 11 quinquies. Pipeline de eventos con Kafka Streams (Guia 3.2.2)
+
+Microservicio `ms-vidasalud-streams` (puerto 8085, sin endpoints de negocio). Es el equivalente al "monitoreo de transacciones bancarias" de la guia, aplicado a las citas:
+
+| Guia (banco) | VidaSalud |
+|---|---|
+| Entrada `banco-transacciones` | `vidasalud.citas` (eventos que publica `ms-vidasalud-appointments`, Guia 3.2.1) |
+| Filtro: monto < 10 se ignora | Se ignoran JSON ilegibles, eventos sin paciente y sin cambio real de estado |
+| Enriquecimiento (moneda a USD) | Categoria del evento: CANCELACION / CONFIRMACION / CIERRE / ATENCION |
+| Deteccion: monto > 10.000 = SOSPECHOSA | Paciente con >= 3 cancelaciones (`vidasalud.streams.umbral-cancelaciones`) |
+| Agregacion: total por usuario | Eventos acumulados por paciente (key = `pacienteId`) |
+| Salida `banco-alertas` | `vidasalud.alertas` y `vidasalud.citas-por-paciente` |
+
+Codigo: `ms-vidasalud-streams/src/main/java/com/vidasalud/streams/topology/CitasTopology.java`.
+
+### Como ejecutarlo
+
+1. Kafka levantado (ver 11 quater) y `ms-vidasalud-appointments` / `ms-vidasalud-notify` con `KAFKA_ENABLED=true`.
+2. En local: `cd ms-vidasalud-streams && mvn spring-boot:run` (usa `KAFKA_BOOTSTRAP_SERVERS`, por defecto `localhost:9092`).
+   En la EC2: `docker compose -f docker-compose.ec2.yml --profile kafka up -d --build`.
+3. Cambiar el estado de citas desde la app. Con **3 cancelaciones de un mismo paciente** aparece en el log de streams:
+   `[STREAMS] ALERTA paciente=... severidad=MEDIA motivo=Paciente con cancelaciones reiteradas (3)`.
+4. En Kafka UI: topic `vidasalud.alertas` (JSON de la alerta) y `vidasalud.citas-por-paciente` (key = paciente, value = total).
+
+### Tests
+
+```
+cd ms-vidasalud-streams && mvn test     # CitasTopologyTest (TopologyTestDriver, sin broker)
 ```
 
 ---
