@@ -30,8 +30,25 @@ spring:
     password: ${RABBITMQ_PASSWORD:vidasalud123}
     connection-timeout: 3s   # si RabbitMQ está caído, no cuelga la API de citas
 
+  # --- Guía 3.2.1: Apache Kafka (productor). Solo se usa si vidasalud.kafka.enabled=true ---
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        # si Kafka está caído, send() no cuelga la API de citas (por defecto esperaría 60 s)
+        max.block.ms: 3000
+        request.timeout.ms: 3000
+        delivery.timeout.ms: 6000
+
 # --- EP3: TODOS los nombres de la topología RabbitMQ viven aquí (y solo aquí) ---
 vidasalud:
+  kafka:
+    enabled: ${KAFKA_ENABLED:false}   # true = además de RabbitMQ publica cada cambio de estado en Kafka
+    topic: vidasalud.citas
+    partitions: 3                     # 3 particiones para ver la distribución (guía 3.2.1)
+    replicas: 1                       # 1 broker = factor 1
   rabbit:
     exchanges:
       direct: cmd.direct
