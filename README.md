@@ -21,6 +21,8 @@ Este documento esta pensado para que cualquier persona, sin conocimiento previo 
 
 Secciones adicionales EP3: "11 bis. Mensajeria asincrona con RabbitMQ" y "11 ter. Despliegue de EP3 en AWS (RabbitMQ en EC2 independiente)".
 
+Seccion adicional Guia 3.2.1: "11 quater. Apache Kafka: topic, productor, consumidor, particiones y offsets".
+
 ---
 
 ## 1. Descripcion general y arquitectura
@@ -56,6 +58,7 @@ vidasalud-backend/
   ms-vidasalud-notify/          (EP3: consumidor RabbitMQ)
   ms-vidasalud-rabbit-admin/    (EP3: API de administracion de RabbitMQ)
   mq/                           (EP3: cluster RabbitMQ de 2 nodos para la EC2 independiente)
+  kafka/                        (Guia 3.2.1: ZooKeeper + Kafka + Kafka UI con Docker)
   docker-compose.yml            (todo en una sola maquina, para desarrollo local)
   docker-compose.ec2.yml        (EP3: solo las aplicaciones, para la EC2 del backend)
   apigateway-vidasalud.yml      (EP3: plantilla CloudFormation del API Gateway, rutas explicitas)
@@ -604,6 +607,74 @@ Verificacion: `docker logs vidasalud-backend-notify-1` debe mostrar `Created new
 2. Cambiar estados: `PUT <gateway>/api/appointments/{id}/status` con `{"status":"CONFIRMADA"}` (luego EN_ESPERA, EN_ATENCION, CERRADA).
 3. DLQ: crear una cita con `pacienteId` `fail-fatal-01` o `fail-temp-01`; el mensaje termina en `q.cmd.email.dlq` (visible en `GET <gateway>/api/mq/queues/q.cmd.email.dlq` o en la interfaz web de RabbitMQ).
 4. Administracion: listar, crear y eliminar colas, exchanges y bindings en `<gateway>/api/mq/...` con un token de Admin.
+
+---
+
+## 11 quater. Apache Kafka: topic, productor, consumidor, particiones y offsets (Guia 3.2.1)
+
+Kafka se integra **ademas** de RabbitMQ, sin reemplazarlo ni tocar su flujo. Esta apagado por defecto: solo se usa si `KAFKA_ENABLED=true`.
+
+| Pieza de la guia | Donde esta en el proyecto |
+|---|---|
+| Docker: ZooKeeper + Kafka + Kafka UI | `kafka/docker-compose.yml` |
+| Topic con 3 particiones, factor de replicacion 1 | `vidasalud.citas`, creado al arrancar por `KafkaTopicConfig` (appointments y notify) |
+| Productor (`KafkaTemplate`) | `ms-vidasalud-appointments`: `messaging/AppointmentKafkaPublisher`, llamado desde `AppointmentEventPublisher` |
+| Consumidor (`@KafkaListener`) | `ms-vidasalud-notify`: `consumer/CitasKafkaConsumer` (grupo `vidasalud-notify`) |
+| Configuracion (bootstrap-servers, serializers, group-id, auto-offset-reset) | `application.yml` de ambos servicios (`spring.kafka` y `vidasalud.kafka`) |
+
+### Como funciona
+
+- Cada cambio de estado de una atencion (SOLICITADA, CONFIRMADA, EN_ESPERA, EN_ATENCION, CERRADA, CANCELADA) se publica en el topic `vidasalud.citas`.
+- **La key del mensaje es `cita-{id}`.** Kafka calcula `hash(key)` y manda siempre los eventos de la misma cita a la **misma particion**, asi sus cambios de estado se leen en orden (sticky partitioning). Citas distintas se reparten entre las 3 particiones.
+- El valor es el mismo envelope JSON que usa RabbitMQ (`type`, `eventId`, `timestamp`, `traceId`, `correlationId`, `payload`).
+- Igual que con RabbitMQ, la mensajeria no rompe el negocio: la publicacion es asincrona, con tiempos de espera cortos (`max.block.ms` 3 s), y si Kafka esta caido solo se registra el error y la API responde igual. Si RabbitMQ falla, Kafka igual publica, y al reves.
+- El grupo de consumidores guarda el ultimo offset leido (`enable-auto-commit: true`): si notify se reinicia **no vuelve a leer** los mensajes anteriores, sigue desde donde quedo. Un grupo nuevo parte desde el principio (`auto-offset-reset: earliest`).
+
+### Levantar Kafka (Docker)
+
+```
+cd kafka
+KAFKA_ADVERTISED_HOST=<IP privada de la EC2 de mensajeria> docker compose up -d     # en tu PC: docker compose up -d
+```
+
+Kafka UI queda en `http://<ip>:8080` (Topics, Messages, Consumers). En la EC2 hay que abrir en el Security Group: 9092 desde la red interna `172.31.0.0/16` (apps -> Kafka) y 8080 solo desde la IP de quien hace la demo.
+
+### Activar Kafka en las aplicaciones
+
+Agregar en el `.env` de la EC2 de las aplicaciones y volver a levantar:
+
+```
+KAFKA_ENABLED=true
+KAFKA_BOOTSTRAP_SERVERS=<IP privada de la EC2 de mensajeria>:9092
+```
+
+Para ejecutar los servicios a mano: variables de entorno `KAFKA_ENABLED=true` y `KAFKA_BOOTSTRAP_SERVERS=localhost:9092` (valores por defecto de `application.yml`).
+
+### Crear / verificar el topic a mano (alternativa a la creacion automatica)
+
+```
+docker exec -it kafka-kafka-1 bash
+kafka-topics --create --bootstrap-server localhost:9092 --topic vidasalud.citas --partitions 3 --replication-factor 1
+kafka-topics --describe --bootstrap-server localhost:9092 --topic vidasalud.citas
+```
+
+El nombre del contenedor depende de la carpeta desde la que se levanto el compose (`docker ps` lo muestra). Con `KAFKA_AUTO_CREATE_TOPICS_ENABLE=false` el broker no crea topics por su cuenta.
+
+### Observar particiones y offsets
+
+1. Crear una cita y cambiarle el estado varias veces (por el Gateway o el front).
+2. En el log de **appointments** (`docker logs -f <contenedor appointments>`): `[KAFKA PUBLICADO] topic=vidasalud.citas partition=1 offset=0 key=cita-3 type=APPOINTMENT_STATE_CHANGED ...`
+3. En el log de **notify**: `[KAFKA RECIBIDO] partition=1 offset=0 key=cita-3 ... estado=SOLICITADA->CONFIRMADA`
+4. Todos los eventos de `cita-3` caen en la **misma particion** con offsets consecutivos; otra cita puede caer en otra particion, con su propio offset desde 0.
+5. En Kafka UI: Topics -> `vidasalud.citas` -> Messages, con las columnas Partition, Offset, Key y Value.
+6. Persistencia de offsets: reiniciar notify (`docker restart <contenedor notify>`); no reimprime los mensajes anteriores. En el log aparece `Setting offset for partition ... to the committed offset ...`.
+
+### Tests
+
+```
+cd ms-vidasalud-appointments && mvn test     # AppointmentKafkaPublisherTest, AppointmentEventPublisherKafkaTest
+cd ms-vidasalud-notify && mvn test            # CitasKafkaConsumerTest
+```
 
 ---
 

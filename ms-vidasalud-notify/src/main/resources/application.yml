@@ -16,8 +16,24 @@ spring:
         prefetch: 1                   # un mensaje a la vez por consumidor
         default-requeue-rejected: false   # red de seguridad: un rechazo nunca vuelve a la cola, va a la DLQ
 
+  # --- Guía 3.2.1: Apache Kafka (consumidor). Solo se usa si vidasalud.kafka.enabled=true ---
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: ${vidasalud.kafka.group-id}
+      auto-offset-reset: earliest       # un grupo nuevo parte desde el primer mensaje
+      enable-auto-commit: true          # el grupo recuerda el último offset leído
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
 # --- EP3: TODOS los nombres de la topología RabbitMQ viven aquí (y solo aquí) ---
 vidasalud:
+  kafka:
+    enabled: ${KAFKA_ENABLED:false}   # true = notify también consume el topic de citas
+    topic: vidasalud.citas
+    group-id: vidasalud-notify
+    partitions: 3
+    replicas: 1
   rabbit:
     exchanges:
       direct: cmd.direct

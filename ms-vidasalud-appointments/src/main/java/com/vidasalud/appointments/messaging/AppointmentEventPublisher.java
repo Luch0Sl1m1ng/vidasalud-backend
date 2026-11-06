@@ -6,6 +6,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.MessageDeliveryMode;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -15,6 +17,10 @@ import org.springframework.stereotype.Component;
  * Regla de oro (EP3): la mensajería NO puede romper el negocio.
  * Si RabbitMQ está caído, la atención ya quedó guardada en la BD y
  * solo se registra el error en el log; la API responde igual.
+ *
+ * Además, si Kafka está habilitado (vidasalud.kafka.enabled=true), cada cambio
+ * de estado se publica también en el topic de citas (AppointmentKafkaPublisher).
+ * Rabbit y Kafka son independientes: si uno falla, el otro igual publica.
  */
 @Component
 public class AppointmentEventPublisher {
@@ -23,10 +29,26 @@ public class AppointmentEventPublisher {
 
     private final RabbitTemplate rabbitTemplate;
     private final MessagingProperties props;
+    /** null cuando Kafka está deshabilitado. */
+    private final AppointmentKafkaPublisher kafkaPublisher;
 
+    /** Constructor que usa Spring: Kafka es opcional (solo existe si vidasalud.kafka.enabled=true). */
+    @Autowired
+    public AppointmentEventPublisher(RabbitTemplate rabbitTemplate, MessagingProperties props,
+                                     ObjectProvider<AppointmentKafkaPublisher> kafkaPublisher) {
+        this(rabbitTemplate, props, kafkaPublisher.getIfAvailable());
+    }
+
+    /** Solo RabbitMQ (Kafka deshabilitado). */
     public AppointmentEventPublisher(RabbitTemplate rabbitTemplate, MessagingProperties props) {
+        this(rabbitTemplate, props, (AppointmentKafkaPublisher) null);
+    }
+
+    AppointmentEventPublisher(RabbitTemplate rabbitTemplate, MessagingProperties props,
+                              AppointmentKafkaPublisher kafkaPublisher) {
         this.rabbitTemplate = rabbitTemplate;
         this.props = props;
+        this.kafkaPublisher = kafkaPublisher;
     }
 
     /**
@@ -66,6 +88,10 @@ public class AppointmentEventPublisher {
             log.error("No se pudo publicar el evento de la atención {} (estado {}). "
                             + "La atención quedó guardada igual. Causa: {}",
                     appointment.getId(), appointment.getEstado(), ex.getMessage());
+        }
+
+        if (kafkaPublisher != null) {
+            kafkaPublisher.publicarCambio(payload);
         }
     }
 
