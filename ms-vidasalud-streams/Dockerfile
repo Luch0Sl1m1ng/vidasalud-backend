@@ -4,6 +4,8 @@ COPY . .
 RUN mvn -q clean package -Dmaven.test.skip=true
 
 FROM eclipse-temurin:21-jre-alpine
+# RocksDB (almacen de estado de Kafka Streams) necesita libstdc++, que Alpine no trae
+RUN apk add --no-cache libstdc++
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
 EXPOSE 8085
