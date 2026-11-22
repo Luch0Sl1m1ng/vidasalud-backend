@@ -4,24 +4,28 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.vidasalud.notify.config.NotifyProperties;
+import com.vidasalud.notify.exception.NonRecoverableMessageException;
+import com.vidasalud.notify.model.AppointmentEventPayload;
+import com.vidasalud.notify.model.MessageEnvelope;
+import com.vidasalud.notify.service.CitaAuditoriaService;
+import com.vidasalud.notify.service.DemoFailureSimulator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import java.time.Instant;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CitasKafkaConsumerTest {
 
-    private static final String JSON = """
-            {"type":"APPOINTMENT_STATE_CHANGED","eventId":"e-1","timestamp":"2026-11-05T20:00:00Z",
-             "traceId":"t-1","correlationId":"appointment-9",
-             "payload":{"appointmentId":9,"pacienteId":"paciente-1","servicioId":3,"boxId":2,
-                        "estadoAnterior":"SOLICITADA","estadoNuevo":"CONFIRMADA"}}
-            """;
+    private static final MessageEnvelope EVENTO = new MessageEnvelope(
+            "APPOINTMENT_STATE_CHANGED", "e-1", Instant.parse("2026-11-05T20:00:00Z"), "t-1", "appointment-9",
+            new AppointmentEventPayload(9L, "paciente-1", 3L, 2L, "SOLICITADA", "CONFIRMADA"));
 
     private CitasKafkaConsumer consumer;
     private ListAppender<ILoggingEvent> logs;
@@ -29,7 +33,9 @@ class CitasKafkaConsumerTest {
 
     @BeforeEach
     void setUp() {
-        consumer = new CitasKafkaConsumer(new ObjectMapper().findAndRegisterModules());
+        DemoFailureSimulator simulator = new DemoFailureSimulator(
+                new NotifyProperties(false, new NotifyProperties.Retry(3, 1, 2.0, 10)));
+        consumer = new CitasKafkaConsumer(new CitaAuditoriaService(new ProcessedEventStore(), simulator));
         logger = (Logger) LoggerFactory.getLogger(CitasKafkaConsumer.class);
         logger.setLevel(Level.INFO);
         logs = new ListAppender<>();
@@ -44,7 +50,7 @@ class CitasKafkaConsumerTest {
 
     @Test
     void muestraParticionOffsetYKeyDelMensaje() {
-        consumer.onMessage(JSON, 2, 7L, "cita-9");
+        consumer.onMessage(EVENTO, 2, 7L, "cita-9");
 
         assertEquals(1, logs.list.size());
         String linea = logs.list.get(0).getFormattedMessage();
@@ -56,15 +62,15 @@ class CitasKafkaConsumerTest {
 
     @Test
     void aceptaMensajesSinKey() {
-        consumer.onMessage(JSON, 0, 0L, null);
+        consumer.onMessage(EVENTO, 0, 0L, null);
 
         assertTrue(logs.list.get(0).getFormattedMessage().contains("key=(sin key)"));
     }
 
     @Test
-    void unMensajeIlegibleNoDetieneAlConsumidor() {
-        assertDoesNotThrow(() -> consumer.onMessage("esto no es json", 1, 3L, "cita-1"));
-
-        assertEquals(Level.WARN, logs.list.get(0).getLevel());
+    void unEventoInvalidoSeRechazaComoNoRecuperable() {
+        // el DefaultErrorHandler lo manda directo a la DLT (sin reintentos)
+        assertThrows(NonRecoverableMessageException.class, () -> consumer.onMessage(null, 1, 3L, "cita-1"));
+        assertTrue(logs.list.isEmpty());
     }
 }

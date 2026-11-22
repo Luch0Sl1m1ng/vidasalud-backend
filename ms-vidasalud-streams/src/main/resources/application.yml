@@ -7,9 +7,10 @@ spring:
 
   # --- Guia 3.2.2: Kafka Streams (pipeline de eventos de citas) ---
   kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}   # varios brokers: host1:9092,host2:9093,host3:9094
     streams:
       application-id: vidasalud-streams      # unico: es el consumer group de Streams
+      replication-factor: ${KAFKA_TOPIC_REPLICAS:1}   # topics internos (repartition/changelog) = nº de brokers
       properties:
         default.key.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
         default.value.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
@@ -22,7 +23,9 @@ vidasalud:
     por-paciente-topic: vidasalud.citas-por-paciente   # salida: agregacion (eventos acumulados por paciente)
     umbral-cancelaciones: 3                            # >= N cancelaciones del mismo paciente => alerta
     partitions: 3
-    replicas: 1
+    replicas: ${KAFKA_TOPIC_REPLICAS:1}                # = nº de brokers
+    alerts-retention-ms: 2592000000                    # alertas: 30 días (cleanup.policy=delete)
+    min-insync-replicas: ${KAFKA_MIN_ISR:1}
 
 management:
   endpoints:

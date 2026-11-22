@@ -280,6 +280,97 @@ Resources:
       AuthorizerId: !Ref VidaSaludJwtAuthorizer
       AuthorizationScopes: [!Ref RequiredScope]
 
+  # EP5: administracion de Kafka (BFF -> ms-vidasalud-kafka-admin). Rutas explicitas, sin comodin.
+  KafkaClusterRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'GET /api/kafka/cluster'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  KafkaCreateTopicRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'POST /api/kafka/topics'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  KafkaListTopicsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'GET /api/kafka/topics'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  KafkaGetTopicRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'GET /api/kafka/topics/{name}'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  KafkaDeleteTopicRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'DELETE /api/kafka/topics/{name}'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  KafkaUpdateConfigRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'PUT /api/kafka/topics/{name}/config'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  KafkaUpdatePartitionsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'PUT /api/kafka/topics/{name}/partitions'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  KafkaListGroupsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'GET /api/kafka/consumer-groups'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
+  KafkaGetGroupRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VidaSaludHttpApi
+      RouteKey: 'GET /api/kafka/consumer-groups/{groupId}'
+      Target: !Sub 'integrations/${VidaSaludBffIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref VidaSaludJwtAuthorizer
+      AuthorizationScopes: [!Ref RequiredScope]
+
   # Unica ruta publica: health check del BFF (sin comodin).
   HealthRoute:
     Type: AWS::ApiGatewayV2::Route

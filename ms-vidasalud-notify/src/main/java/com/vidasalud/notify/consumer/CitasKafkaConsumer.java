@@ -1,7 +1,7 @@
 package com.vidasalud.notify.consumer;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vidasalud.notify.model.MessageEnvelope;
+import com.vidasalud.notify.service.CitaAuditoriaService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -12,15 +12,14 @@ import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Component;
 
 /**
- * CONSUMIDOR Kafka (Guía 3.2.1). Escucha el topic de citas y muestra en el log, por cada
- * mensaje:
- *   - partition: en cuál de las 3 particiones llegó
- *   - offset:    posición secuencial dentro de esa partición
- *   - key:       "cita-{id}" (los eventos de una misma cita llegan siempre a la misma partición)
+ * CONSUMIDOR Kafka de citas. Solo recibe el mensaje ya convertido a DTO (MessageEnvelope) y lo
+ * entrega a CitaAuditoriaService: aquí NO hay lógica de negocio, solo mensajería.
  *
- * El grupo de consumidores (vidasalud-notify) guarda el último offset leído: si notify se
- * reinicia NO vuelve a leer los mensajes anteriores, sigue desde donde quedó.
- * El consumidor es independiente de las colas RabbitMQ.
+ *  - consumer group "vidasalud-notify": las 3 particiones se reparten entre los hilos del grupo; si
+ *    notify se reinicia el grupo sigue desde el último offset confirmado (no relee todo).
+ *  - Si el servicio lanza una excepción, el DefaultErrorHandler (config/KafkaConsumerConfig) decide:
+ *    reintentar con backoff o mandar el mensaje a "vidasalud.citas.DLT".
+ *  - Es independiente de las colas RabbitMQ.
  */
 @Component
 @ConditionalOnProperty(name = "vidasalud.kafka.enabled", havingValue = "true")
@@ -28,29 +27,27 @@ public class CitasKafkaConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(CitasKafkaConsumer.class);
 
-    private final ObjectMapper objectMapper;
+    private final CitaAuditoriaService service;
 
-    public CitasKafkaConsumer(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
+    public CitasKafkaConsumer(CitaAuditoriaService service) {
+        this.service = service;
     }
 
-    @KafkaListener(topics = "${vidasalud.kafka.topic}", groupId = "${vidasalud.kafka.group-id}")
+    @KafkaListener(
+            topics = "${vidasalud.kafka.topic}",
+            groupId = "${vidasalud.kafka.group-id}",
+            properties = "spring.json.value.default.type=com.vidasalud.notify.model.MessageEnvelope")
     public void onMessage(
-            @Payload String message,
+            @Payload MessageEnvelope envelope,
             @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
             @Header(KafkaHeaders.OFFSET) long offset,
             @Header(name = KafkaHeaders.RECEIVED_KEY, required = false) String key) {
 
-        try {
-            MessageEnvelope envelope = objectMapper.readValue(message, MessageEnvelope.class);
-            log.info("[KAFKA RECIBIDO] partition={} offset={} key={} type={} eventId={} cita={} estado={}->{}",
-                    partition, offset, key != null ? key : "(sin key)", envelope.type(), envelope.eventId(),
-                    envelope.payload().appointmentId(),
-                    envelope.payload().estadoAnterior(), envelope.payload().estadoNuevo());
-        } catch (Exception ex) {
-            // Un mensaje ilegible no debe detener al consumidor: se deja constancia y se sigue.
-            log.warn("[KAFKA RECIBIDO] partition={} offset={} key={} con contenido no reconocido ({}): {}",
-                    partition, offset, key != null ? key : "(sin key)", ex.getClass().getSimpleName(), message);
-        }
+        service.registrar(envelope);
+
+        log.info("[KAFKA RECIBIDO] partition={} offset={} key={} type={} eventId={} cita={} estado={}->{}",
+                partition, offset, key != null ? key : "(sin key)", envelope.type(), envelope.eventId(),
+                envelope.payload().appointmentId(),
+                envelope.payload().estadoAnterior(), envelope.payload().estadoNuevo());
     }
 }

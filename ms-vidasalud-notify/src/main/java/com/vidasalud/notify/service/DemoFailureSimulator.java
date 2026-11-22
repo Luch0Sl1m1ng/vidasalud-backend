@@ -22,10 +22,14 @@ public class DemoFailureSimulator {
     }
 
     public void verificar(MessageEnvelope envelope) {
+        verificarPaciente(envelope.payload().pacienteId());
+    }
+
+    /** Misma regla pero a partir del pacienteId (la usan también los consumidores Kafka). */
+    public void verificarPaciente(String paciente) {
         if (!enabled) {
             return;
         }
-        String paciente = envelope.payload().pacienteId();
         if (paciente == null) {
             return;
         }

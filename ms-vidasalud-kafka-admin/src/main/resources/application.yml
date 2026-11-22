@@ -1,0 +1,34 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: ms-vidasalud-kafka-admin
+
+  # --- Conexión al cluster Kafka (uno o varios brokers separados por coma) ---
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    admin:
+      client-id: ms-vidasalud-kafka-admin
+      properties:
+        request.timeout.ms: 5000        # si el broker no responde, la API falla rápido (503)
+        default.api.timeout.ms: 8000
+
+vidasalud:
+  kafka-admin:
+    timeout-seconds: 10                 # tiempo máximo por operación de administración
+    # Topics del negocio: para eliminarlos hay que confirmar con ?force=true (los topics "_" internos nunca se borran)
+    protected-topics:
+      - vidasalud.citas
+      - vidasalud.alertas
+      - vidasalud.citas-por-paciente
+
+azure:
+  issuer: https://login.microsoftonline.com/b474f3ba-4718-40c4-90eb-000db1255fdd/v2.0
+  audience: 213b4c6d-59e8-44e4-a319-63b38eef4c6e
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
