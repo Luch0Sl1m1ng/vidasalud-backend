@@ -32,6 +32,9 @@ public class ProxyController {
     @Value("${services.rabbit-admin-url}")
     private String rabbitAdminUrl;
 
+    @Value("${services.kafka-admin-url}")
+    private String kafkaAdminUrl;
+
     @Value("${services.appointments-url}")
     private String appointmentsUrl;
 
@@ -65,6 +68,15 @@ public class ProxyController {
                                                      @RequestHeader HttpHeaders headers,
                                                      @RequestBody(required = false) String body) {
         return forward(rabbitAdminUrl, request, headers, body);
+    }
+
+    // EP5: administración de Kafka (topics, configuraciones, consumer groups). Solo rol Admin.
+    @RequestMapping(value = "/api/kafka/**", method = {
+            RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE})
+    public ResponseEntity<String> proxyKafkaAdmin(HttpServletRequest request,
+                                                    @RequestHeader HttpHeaders headers,
+                                                    @RequestBody(required = false) String body) {
+        return forward(kafkaAdminUrl, request, headers, body);
     }
 
     private ResponseEntity<String> forward(String baseUrl, HttpServletRequest request,

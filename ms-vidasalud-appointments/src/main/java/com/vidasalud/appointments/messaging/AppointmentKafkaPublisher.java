@@ -1,7 +1,5 @@
 package com.vidasalud.appointments.messaging;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,25 +24,22 @@ public class AppointmentKafkaPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(AppointmentKafkaPublisher.class);
 
-    private final KafkaTemplate<String, String> kafkaTemplate;
+    // DTO tipado: el serializer JSON de KafkaProducerConfig convierte el MessageEnvelope a JSON.
+    private final KafkaTemplate<String, MessageEnvelope> kafkaTemplate;
     private final KafkaTopicProperties props;
-    private final ObjectMapper objectMapper;
 
-    public AppointmentKafkaPublisher(KafkaTemplate<String, String> kafkaTemplate,
-                                     KafkaTopicProperties props,
-                                     ObjectMapper objectMapper) {
+    public AppointmentKafkaPublisher(KafkaTemplate<String, MessageEnvelope> kafkaTemplate,
+                                     KafkaTopicProperties props) {
         this.kafkaTemplate = kafkaTemplate;
         this.props = props;
-        this.objectMapper = objectMapper;
     }
 
     public void publicarCambio(AppointmentEventPayload payload) {
         try {
             MessageEnvelope envelope = MessageEnvelope.nuevo("APPOINTMENT_STATE_CHANGED", payload);
             String key = "cita-" + payload.appointmentId();
-            String json = objectMapper.writeValueAsString(envelope);
 
-            kafkaTemplate.send(props.topic(), key, json).whenComplete((result, ex) -> {
+            kafkaTemplate.send(props.topic(), key, envelope).whenComplete((result, ex) -> {
                 if (ex != null) {
                     log.error("[KAFKA ERROR] no se pudo publicar key={} eventId={}. Causa: {}",
                             key, envelope.eventId(), ex.getMessage());
@@ -54,7 +49,7 @@ public class AppointmentKafkaPublisher {
                 log.info("[KAFKA PUBLICADO] topic={} partition={} offset={} key={} type={} eventId={}",
                         md.topic(), md.partition(), md.offset(), key, envelope.type(), envelope.eventId());
             });
-        } catch (JsonProcessingException | RuntimeException ex) {
+        } catch (RuntimeException ex) {
             log.error("[KAFKA ERROR] no se pudo publicar el evento de la atención {}. "
                             + "La atención quedó guardada igual. Causa: {}",
                     payload.appointmentId(), ex.getMessage());
