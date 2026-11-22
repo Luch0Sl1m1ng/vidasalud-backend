@@ -16,24 +16,30 @@ spring:
         prefetch: 1                   # un mensaje a la vez por consumidor
         default-requeue-rejected: false   # red de seguridad: un rechazo nunca vuelve a la cola, va a la DLQ
 
-  # --- Guía 3.2.1: Apache Kafka (consumidor). Solo se usa si vidasalud.kafka.enabled=true ---
+  # --- Apache Kafka (consumidor). Solo se usa si vidasalud.kafka.enabled=true ---
+  # Varios brokers: kafka1:9092,kafka2:9093,kafka3:9094
+  # Deserializers, consumer groups, commit de offsets y manejo de errores: ver config/KafkaConsumerConfig.
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-    consumer:
-      group-id: ${vidasalud.kafka.group-id}
-      auto-offset-reset: earliest       # un grupo nuevo parte desde el primer mensaje
-      enable-auto-commit: true          # el grupo recuerda el último offset leído
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
 
 # --- EP3: TODOS los nombres de la topología RabbitMQ viven aquí (y solo aquí) ---
 vidasalud:
   kafka:
-    enabled: ${KAFKA_ENABLED:false}   # true = notify también consume el topic de citas
-    topic: vidasalud.citas
-    group-id: vidasalud-notify
+    enabled: ${KAFKA_ENABLED:false}       # true = notify también consume los topics de Kafka
+    topic: vidasalud.citas                # eventos de citas (productor: appointments)
+    group-id: vidasalud-notify            # consumer group de citas
+    alertas-topic: vidasalud.alertas      # alertas (productor: streams)
+    alertas-group-id: vidasalud-notify-alertas   # consumer group propio para alertas
     partitions: 3
-    replicas: 1
+    replicas: ${KAFKA_TOPIC_REPLICAS:1}   # = nº de brokers
+    min-insync-replicas: ${KAFKA_MIN_ISR:1}
+    concurrency: 3                        # hilos por listener = particiones (reparto de carga)
+    dlt-retention-ms: 1209600000          # mensajes fallidos (DLT) se conservan 14 días
+    retry:                                # control de reintentos antes de mandar a la DLT
+      max-attempts: 3
+      initial-interval-ms: 1000
+      multiplier: 2.0
+      max-interval-ms: 10000
   rabbit:
     exchanges:
       direct: cmd.direct

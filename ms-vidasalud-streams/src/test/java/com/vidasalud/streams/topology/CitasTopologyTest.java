@@ -26,7 +26,7 @@ class CitasTopologyTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final StreamsProperties PROPS =
-            new StreamsProperties("in", "alertas", "por-paciente", 3, 3, (short) 1);
+            new StreamsProperties("in", "alertas", "por-paciente", 3, 3, (short) 1, 2_592_000_000L, 1);
 
     private TopologyTestDriver driver;
     private TestInputTopic<String, String> entrada;

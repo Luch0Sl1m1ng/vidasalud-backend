@@ -5,6 +5,8 @@
 # Kafka (Guia 3.2.1) es opcional: para activarlo agrega en .env
 #   KAFKA_ENABLED=true  y  KAFKA_BOOTSTRAP_SERVERS=<IP privada de la EC2 de mensajeria>:9092
 # (el broker corre en kafka/docker-compose.yml). Sin esas variables todo funciona solo con RabbitMQ.
+# EP5: kafka-admin (8086) siempre se levanta; si Kafka esta apagado responde 503 pero no afecta al resto.
+#   Cluster de 3 brokers: KAFKA_BOOTSTRAP_SERVERS=ip:9092,ip:9093,ip:9094  KAFKA_TOPIC_REPLICAS=3  KAFKA_MIN_ISR=2
 # Guia 3.2.2 (Kafka Streams): el servicio 'streams' solo arranca con el perfil kafka:
 #   docker compose -f docker-compose.ec2.yml --profile kafka up -d --build
 services:
@@ -17,7 +19,8 @@ services:
       - APPOINTMENTS_URL=http://appointments:8081
       - CATALOG_URL=http://catalog:8082
       - RABBIT_ADMIN_URL=http://rabbit-admin:8084
-    depends_on: [appointments, catalog, rabbit-admin]
+      - KAFKA_ADMIN_URL=http://kafka-admin:8086
+    depends_on: [appointments, catalog, rabbit-admin, kafka-admin]
     restart: unless-stopped
 
   appointments:
@@ -32,6 +35,8 @@ services:
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
       - KAFKA_ENABLED=${KAFKA_ENABLED:-false}
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}
+      - KAFKA_TOPIC_REPLICAS=${KAFKA_TOPIC_REPLICAS:-1}
+      - KAFKA_MIN_ISR=${KAFKA_MIN_ISR:-1}
     restart: unless-stopped
 
   catalog:
@@ -51,6 +56,8 @@ services:
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
       - KAFKA_ENABLED=${KAFKA_ENABLED:-false}
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}
+      - KAFKA_TOPIC_REPLICAS=${KAFKA_TOPIC_REPLICAS:-1}
+      - KAFKA_MIN_ISR=${KAFKA_MIN_ISR:-1}
     restart: unless-stopped
 
   # Guia 3.2.2: pipeline Kafka Streams (vidasalud.citas -> vidasalud.alertas / vidasalud.citas-por-paciente)
@@ -60,6 +67,8 @@ services:
     ports: ["8085:8085"]
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}
+      - KAFKA_TOPIC_REPLICAS=${KAFKA_TOPIC_REPLICAS:-1}
+      - KAFKA_MIN_ISR=${KAFKA_MIN_ISR:-1}
     restart: unless-stopped
 
   rabbit-admin:
@@ -73,4 +82,14 @@ services:
       - RABBITMQ_USER=${RABBITMQ_USER}
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
       - RABBITMQ_MANAGEMENT_URL=http://${RABBITMQ_HOST}:15672
+    restart: unless-stopped
+
+  # EP5: administrador de Kafka (topics, configuraciones, consumer groups). JWT + rol Admin.
+  kafka-admin:
+    build: ./ms-vidasalud-kafka-admin
+    ports: ["8086:8086"]
+    environment:
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}
     restart: unless-stopped
