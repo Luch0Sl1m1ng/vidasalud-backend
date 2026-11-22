@@ -41,8 +41,8 @@ public class KafkaProducerConfig {
         cfg.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 3000);
         cfg.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 3000);
         cfg.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 6000);
-        cfg.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
 
+        // El JsonSerializer se configura SOLO con el setter (no también por propiedades): Spring Kafka no admite ambas.
         JsonSerializer<MessageEnvelope> valueSerializer = new JsonSerializer<>(objectMapper);
         valueSerializer.setAddTypeInfo(false);
         return new DefaultKafkaProducerFactory<>(cfg, new StringSerializer(), valueSerializer);
