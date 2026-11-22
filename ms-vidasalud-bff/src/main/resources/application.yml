@@ -13,6 +13,7 @@ services:
   appointments-url: ${APPOINTMENTS_URL:http://localhost:8081}
   catalog-url: ${CATALOG_URL:http://localhost:8082}
   rabbit-admin-url: ${RABBIT_ADMIN_URL:http://localhost:8084}
+  kafka-admin-url: ${KAFKA_ADMIN_URL:http://localhost:8086}
 
 management:
   endpoints:

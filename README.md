@@ -23,6 +23,7 @@ Secciones adicionales EP3: "11 bis. Mensajeria asincrona con RabbitMQ" y "11 ter
 
 Seccion adicional Guia 3.2.1: "11 quater. Apache Kafka: topic, productor, consumidor, particiones y offsets".
 
+Seccion adicional EP5: "11 sexies. Kafka avanzado: DTOs, errores/DLT, consumer groups y administracion (EP5)".
 Seccion adicional Guia 3.2.2: "11 quinquies. Pipeline de eventos con Kafka Streams (ms-vidasalud-streams)".
 
 ---
@@ -400,7 +401,7 @@ Se crea con la plantilla de CloudFormation `apigateway-vidasalud.yml` (raiz del 
 - Autorizador JWT: issuer `https://login.microsoftonline.com/<tenant-id>/v2.0` (los tokens de este proyecto son v2.0), audiencia `<client-id>`.
 - CORS configurado en el Gateway (origen por defecto `http://localhost:5173`, parametro `FrontendOrigins`).
 
-### 10.1 Rutas expuestas (18 + health)
+### 10.1 Rutas expuestas (27 + health)
 
 | Metodo | Ruta | Roles (validados en el BFF) |
 |---|---|---|
@@ -422,6 +423,15 @@ Se crea con la plantilla de CloudFormation `apigateway-vidasalud.yml` (raiz del 
 | POST | /api/mq/bindings | Admin |
 | GET | /api/mq/bindings | Admin |
 | DELETE | /api/mq/bindings | Admin |
+| GET | /api/kafka/cluster | Admin |
+| POST | /api/kafka/topics | Admin |
+| GET | /api/kafka/topics | Admin |
+| GET | /api/kafka/topics/{name} | Admin |
+| DELETE | /api/kafka/topics/{name} | Admin |
+| PUT | /api/kafka/topics/{name}/config | Admin |
+| PUT | /api/kafka/topics/{name}/partitions | Admin |
+| GET | /api/kafka/consumer-groups | Admin |
+| GET | /api/kafka/consumer-groups/{groupId} | Admin |
 | GET | /actuator/health | publica (sin token) |
 
 ### 10.2 Crear el Gateway con CloudFormation
@@ -709,6 +719,84 @@ Codigo: `ms-vidasalud-streams/src/main/java/com/vidasalud/streams/topology/Citas
 
 ```
 cd ms-vidasalud-streams && mvn test     # CitasTopologyTest (TopologyTestDriver, sin broker)
+```
+
+---
+
+## 11 sexies. Kafka avanzado (EP5)
+
+Kafka **complementa** a RabbitMQ (no lo reemplaza): RabbitMQ sigue llevando las notificaciones; Kafka lleva el
+historial de eventos (auditoria, alertas y analitica). Con `KAFKA_ENABLED=false` todo funciona solo con RabbitMQ.
+
+### Diseno
+
+| Pieza | Que hace |
+|---|---|
+| `kafka/docker-compose.yml` | ZooKeeper + 3 brokers (9092/9093/9094) + Kafka UI (8080). RF 3, min ISR 2, auto-create desactivado |
+| `ms-vidasalud-appointments` | Productor tipado: `KafkaTemplate<String, MessageEnvelope>` con `JsonSerializer`, `acks=all`, idempotencia, key = `cita-<id>` |
+| `ms-vidasalud-notify` | Dos consumidores con `@KafkaListener`: `vidasalud.citas` (grupo `vidasalud-notify`, `MessageEnvelope`) y `vidasalud.alertas` (grupo `vidasalud-notify-alertas`, `AlertaCitaDto`). La logica vive en `CitaAuditoriaService` / `AlertaPacienteService`, no en el listener |
+| `ms-vidasalud-streams` | Genera `vidasalud.alertas` (>= umbral de cancelaciones) y `vidasalud.citas-por-paciente` (compactado) |
+| `ms-vidasalud-kafka-admin` (8086) | API REST para crear, listar, modificar y eliminar topics, y consultar consumer groups. JWT + rol Admin, entra por el BFF y el Gateway |
+
+### Manejo de errores
+- Deserializacion: `ErrorHandlingDeserializer` + `JsonDeserializer` (un JSON roto no bloquea el consumidor).
+- Validacion del payload en el servicio: faltan datos -> `NonRecoverableMessageException` (sin reintentos, directo a DLT).
+- Reintentos con backoff exponencial (3 intentos, 1s, x2, max 10s); cada reintento se registra como `[KAFKA REINTENTO]`.
+- Al agotar reintentos el mensaje va a `<topic>.DLT` (misma particion) con las cabeceras de la excepcion.
+- Deduplicacion por `eventId` (`ProcessedEventStore`), igual que en RabbitMQ.
+
+### Parametros de topics
+
+| Topic | Particiones | Retencion | cleanup.policy |
+|---|---|---|---|
+| `vidasalud.citas` | 3 | 7 dias | delete |
+| `vidasalud.alertas` | 3 | 30 dias | delete |
+| `vidasalud.citas-por-paciente` | 3 | - | compact |
+| `vidasalud.citas.DLT`, `vidasalud.alertas.DLT` | 3 | 14 dias | delete |
+
+Replication factor y `min.insync.replicas` salen de `KAFKA_TOPIC_REPLICAS` y `KAFKA_MIN_ISR` (1 y 1 con un solo broker; 3 y 2 con el cluster de 3).
+La key del mensaje define la particion: mismo `cita-<id>` -> misma particion -> orden garantizado por cita.
+
+### Consumer groups
+Cada `@KafkaListener` tiene su propio grupo y `concurrency=3` (una hebra por particion). Los offsets los confirma el contenedor
+(`enable.auto.commit=false`). Si levantas 2 instancias de notify con el mismo grupo, las particiones se reparten entre ellas.
+
+### Levantar y activar
+```
+cd kafka && docker compose up -d            # cluster de 3 brokers + Kafka UI
+# en .env de las aplicaciones:
+KAFKA_ENABLED=true
+KAFKA_BOOTSTRAP_SERVERS=<ip>:9092,<ip>:9093,<ip>:9094
+KAFKA_TOPIC_REPLICAS=3
+KAFKA_MIN_ISR=2
+docker compose -f docker-compose.ec2.yml --profile kafka up -d --build
+```
+
+### API de administracion (`/api/kafka`, rol Admin)
+```
+curl -H "Authorization: Bearer $TOKEN" $GW/api/kafka/cluster
+curl -H "Authorization: Bearer $TOKEN" $GW/api/kafka/topics
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" $GW/api/kafka/topics \
+     -d '{"name":"pruebas.demo","partitions":3,"replicationFactor":1,"configs":{"retention.ms":"86400000","cleanup.policy":"delete"}}'
+curl -X PUT  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" $GW/api/kafka/topics/pruebas.demo/config \
+     -d '{"configs":{"retention.ms":"3600000"}}'
+curl -X PUT  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" $GW/api/kafka/topics/pruebas.demo/partitions \
+     -d '{"totalPartitions":5}'
+curl -H "Authorization: Bearer $TOKEN" $GW/api/kafka/consumer-groups
+curl -H "Authorization: Bearer $TOKEN" $GW/api/kafka/consumer-groups/vidasalud-notify     # miembros, offsets y lag
+curl -X DELETE -H "Authorization: Bearer $TOKEN" $GW/api/kafka/topics/pruebas.demo
+```
+Protecciones: solo se permiten configuraciones de una lista segura; las particiones solo se pueden aumentar; los topics internos (`__`) no se tocan y
+los de negocio (`vidasalud.*`) solo se eliminan con `?force=true`.
+
+> Aviso: borrar topics en un Kafka local de Windows (sin Docker) puede dejar el broker con error de archivos bloqueados. En Docker/EC2 no pasa.
+
+### Tests
+```
+cd ms-vidasalud-appointments && mvn test    # productor tipado
+cd ms-vidasalud-notify && mvn test          # consumidores, servicios, deduplicacion y fallos
+cd ms-vidasalud-streams && mvn test
+cd ms-vidasalud-kafka-admin && mvn test     # servicio de administracion y politica de configuraciones
 ```
 
 ---
